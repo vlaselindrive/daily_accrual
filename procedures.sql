@@ -21,7 +21,7 @@ BEGIN
     EXECUTE command2;
 
     /*Открываем балансы по новым займам*/
-    insert into balance_history (loan_id, balance_date, debt_balance)
+    insert into balance_history (loan_id, balance_date, loan_balance)
     select
         t1.id,
         t1.open_dttm,
@@ -63,7 +63,7 @@ CREATE OR REPLACE PROCEDURE  update_balance()
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    insert into balance_history (loan_id, balance_date, debt_balance)
+    insert into balance_history (loan_id, balance_date, loan_balance)
     with fresh_balance as (
         select
             loan_id,
@@ -75,9 +75,9 @@ BEGIN
         t1.loan_id,
         date(t1.balance_date  + INTERVAL '1 day') as balance_date,
         case
-            when t3.daily_total_amount is NULL then t1.debt_balance
-            else (t1.debt_balance - t3.daily_total_amount)
-        end as updated_debt_balance
+            when t3.daily_total_amount is NULL then t1.loan_balance
+            else (t1.loan_balance - t3.daily_total_amount)
+        end as updated_loan_balance
     from balance_history t1
     inner join fresh_balance t2
         on t1.loan_id = t2.loan_id

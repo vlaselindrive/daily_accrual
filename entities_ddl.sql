@@ -23,7 +23,7 @@ VALUES
 select * from clients;
 */
 ----------------------------------------------------------------------
-/* 2) Таблица с продуктами*/
+/* 2.1) Таблица с продуктами*/
 DROP SEQUENCE if exists sequence_2000 CASCADE;
 CREATE SEQUENCE sequence_2000
     START WITH 2001;
@@ -36,7 +36,8 @@ CREATE TABLE products (
     period_days INT NOT NULL,
     policy_id INT,
     risk_category VARCHAR(3),
-    loan_limit INT NOT NULL
+    loan_limit INT NOT NULL,
+    FOREIGN KEY (policy_id) REFERENCES product_policies(id)
 );
 
 INSERT INTO products (product_name, interest_rate, period_days, policy_id, risk_category, loan_limit)
@@ -45,7 +46,7 @@ VALUES
     ('general_loan', 24, 124, 6002, 'B',14000),
     ('general_loan', 26, 124, 6002, 'C',12000),
     ('newbies_loan', 20, 124, 6002, null,8000),
-    ('platinum_loan', 21, 124, 6002, null,18000);
+    ('platinum_loan', 21, 124, 6001, null,18000);
 
 select * from products;
 ----------------------------------------------------------------------
@@ -146,12 +147,12 @@ CREATE TABLE balance_history (
     id INTEGER DEFAULT nextval('sequence_5000') PRIMARY KEY,
     loan_id INT NOT NULL,
     balance_date date NOT NULL,
-    debt_balance INT NOT NULL,
+    loan_balance INT NOT NULL,
     created_dttm TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (loan_id) REFERENCES loans(id)
 );
 
-INSERT INTO balance_history (loan_id, balance_date, debt_balance)
+INSERT INTO balance_history (loan_id, balance_date, loan_balance)
 VALUES
     (3004, '2025-03-08 16:00:00.000000', 0);
 
@@ -173,23 +174,23 @@ select
     t1.id as loan_id,
     t5.product_name,
     case
-        when t4.debt_balance <= 0 then 'PAID'
+        when t4.loan_balance <= 0 then 'PAID'
         else t1.status
     end as loan_status,
 --     DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day')) as first_checkpoint_dt,
 --     (t5.loan_limit * (100 - t7.first_period_share)) / 100 as first_checkpoint_amount,
     case
         when DATE(t2.date) >= DATE(DATE(t1.open_dttm) + (t5.period_days * INTERVAL '1 day'))  AND
-             t4.debt_balance > 0 then 'WARNING:DPD'
+             t4.loan_balance > 0 then 'WARNING:DPD'
         when DATE(t2.date) >= DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day'))  AND
-             t4.debt_balance > (t5.loan_limit * (100 - t7.third_period_share)) / 100 then 'WARNING:3'
+             t4.loan_balance > (t5.loan_limit * (100 - t7.third_period_share)) / 100 then 'WARNING:3'
         when DATE(t2.date) >= DATE(DATE(t1.open_dttm) + (t7.second_period_days * INTERVAL '1 day'))  AND
-             t4.debt_balance > (t5.loan_limit * (100 - t7.second_period_share)) / 100 then 'WARNING:2'
+             t4.loan_balance > (t5.loan_limit * (100 - t7.second_period_share)) / 100 then 'WARNING:2'
         when DATE(t2.date) >= DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day'))  AND
-             t4.debt_balance > (t5.loan_limit * (100 - t7.first_period_share)) / 100 then 'WARNING:1'
+             t4.loan_balance > (t5.loan_limit * (100 - t7.first_period_share)) / 100 then 'WARNING:1'
         else 'OK'
     end as collection_status,
-    t4.debt_balance,
+    t4.loan_balance,
     t3.daily_total_amount,
 --     t3.daily_total_amount * 0.2 as VAT_amount,
 --     t3.daily_total_amount * 0.3 as interest_amount,
