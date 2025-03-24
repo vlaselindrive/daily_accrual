@@ -82,6 +82,7 @@ BEGIN
     inner join fresh_balance t2
         on t1.loan_id = t2.loan_id
         and t1.balance_date = t2.balance_date
+        and t1.loan_balance != 0 /*Чтобы не плодить записи с нулевым балансом*/
     left join payments_agg t3
         on t1.loan_id = t3.loan_id
         and (t1.balance_date + INTERVAL '1 day')  = t3.payment_dttm;
