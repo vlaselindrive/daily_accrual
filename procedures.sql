@@ -90,5 +90,25 @@ BEGIN
 END;
 $$;
 ----------------------------------------------------------------------
+/* 4) Процедура для циклического обновления balance_history за какую-то глубину*/
+CREATE OR REPLACE PROCEDURE  update_balance_history(dt date)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    command1 text;
+BEGIN
+    command1 := format('delete from balance_history where balance_date >=  ''%I''', dt);
+    EXECUTE command1;
 
+    while dt < current_date loop
+        RAISE NOTICE 'Date is: %', dt;
+        call update_balance();
+
+        dt := dt + INTERVAL '1 day';
+        end loop;
+
+    COMMIT;
+END;
+$$;
+----------------------------------------------------------------------
 

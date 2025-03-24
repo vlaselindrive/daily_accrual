@@ -125,7 +125,7 @@ call update_balance();
 call new_payment_add('2025-03-22');
 call update_balance();
 
-/* 10) Проеряем*/
+/* 10) Проверяем*/
 /* a)  Изменение балансов и статусов в daily_accrual*/
 select * from daily_accrual
 where 1=1
@@ -141,3 +141,25 @@ order by loan_id, balance_date desc; /*Проверяем balance_history на �
 /* c)  Появление транзакций в payments_agg*/
 select * from payments_agg
 order by loan_id, payment_dttm desc;
+
+/* 11) Предположим, что мы установили, что новые транзакции, начиная с 2025-03-20 оказались кривыми*/
+/* a) Удаляем кривые транзакции, начиная с 2025-03-20*/
+delete from payments
+where loan_id = 3001
+and payment_dttm >= '2025-03-20';
+
+/* Проверяем daily_accrual*/
+select * from daily_accrual
+where 1=1
+    and loan_id = 3001
+    and report_dt <= '2025-03-22';
+
+/* b) Обновляем исторические данные по балансу, начиная с 2025-03-20*/
+call update_balance_history('2025-03-20');
+
+/* Проверяем daily_accrual*/
+select * from daily_accrual
+where 1=1
+    and loan_id = 3001
+    and report_dt <= '2025-03-22';
+
