@@ -1,4 +1,5 @@
 /*В файле объявляются процедуры, которые потом вызываются в файле exec*/
+
 /* 1) Процедура по добавлению новых займов*/
 CREATE OR REPLACE PROCEDURE new_loans_add(table_name text)
 LANGUAGE plpgsql
@@ -21,16 +22,17 @@ BEGIN
     EXECUTE command2;
 
     /*Открываем балансы по новым займам*/
-    insert into balance_history (loan_id, balance_date, loan_balance)
+    insert into balance_history (loan_id, balance_date, open_principal, open_inetrest, loan_balance)
     select
         t1.id,
         t1.open_dttm,
-        t2.loan_limit
+        t2.loan_limit as open_principal,
+        (t2.loan_limit * t2.interest_rate / 100) * t2.period_days/365 as open_inetrest,
+        t2.loan_limit + (t2.loan_limit * t2.interest_rate / 100) * t2.period_days/365 as loan_balance
     from loans t1
     inner join products t2
         on t1.product_id = t2.id
         and t1.status = 'ACTIVE';
-
     COMMIT;
 END;
 $$;
@@ -42,15 +44,19 @@ AS $$
 DECLARE
     command1 text;
     command2 text;
+--     dt_formated text;
 BEGIN
 
     /*Удаляем из целевой таблицы с займами все займы с idшниками, как во временной таблице*/
-    command1 := format('delete from payments where id in (select id from new_payments where DATE(payment_dttm) = ''%I'')', dt);
+    command1 := format('delete from payments where id in (select id from new_payments where DATE(payment_dttm) = ''%L'')', dt);
     EXECUTE command1;
 
+--     dt_formated := ''''  || dt || '''';
+
     /*Вставляем в целевую таблицу займы из временной таблицы*/
-    command2 := format('insert into payments
-                       select id, loan_id, source, payment_dttm, payment_amount from new_payments where DATE(payment_dttm) = ''%I''', dt);
+    command2 := format('insert into payments (id, /*external_id,*/ loan_id, source, payment_dttm, payment_amount)
+                       select id, /*external_id::UUID,*/ loan_id, source, payment_dttm, payment_amount
+                       from new_payments where DATE(payment_dttm) = %L', dt);
     EXECUTE command2;
 
     COMMIT;
@@ -59,11 +65,11 @@ $$;
 ----------------------------------------------------------------------
 /* 3) Процедура обновления balance_history в конце отчетного дня*/
 /*Берем баланс за вчерашний день, добавляем к нему сегодняшние транзакции и получаем сегодняшний баланс*/
-CREATE OR REPLACE PROCEDURE  update_balance()
+CREATE OR REPLACE PROCEDURE update_balance()
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    insert into balance_history (loan_id, balance_date, loan_balance)
+    insert into balance_history (loan_id, balance_date, open_principal, open_inetrest, loan_balance)
     with fresh_balance as (
         select
             loan_id,
@@ -74,6 +80,23 @@ BEGIN
     select
         t1.loan_id,
         date(t1.balance_date  + INTERVAL '1 day') as balance_date,
+        /*PRINCIPAL*/
+        case
+            when t3.daily_total_amount is NULL then t1.open_principal
+            else case
+                    when (t1.open_inetrest - t3.daily_total_amount) <= 0 then t1.open_principal + (t1.open_inetrest - t3.daily_total_amount)
+                    else t1.open_principal
+                 end
+        end as updated_open_principal,
+        /*INTEREST*/
+        case
+            when t3.daily_total_amount is NULL then t1.open_inetrest
+            else case
+                    when (t1.open_inetrest - t3.daily_total_amount) <= 0 then 0
+                    else (t1.open_inetrest - t3.daily_total_amount)
+                 end
+        end as updated_open_interest,
+        /*TOTAL_BALANCE*/
         case
             when t3.daily_total_amount is NULL then t1.loan_balance
             else (t1.loan_balance - t3.daily_total_amount)
@@ -85,11 +108,18 @@ BEGIN
         and t1.loan_balance != 0 /*Чтобы не плодить записи с нулевым балансом*/
     left join payments_agg t3
         on t1.loan_id = t3.loan_id
-        and (t1.balance_date + INTERVAL '1 day')  = t3.payment_dttm;
+        and (t1.balance_date + INTERVAL '1 day')  = t3.payment_dttm
+    left join loans t4
+        on t1.loan_id = t4.id
+    left join products t5
+        on t4.product_id = t5.id;
 
     COMMIT;
 END;
 $$;
+
+select * from balance_history;
+
 ----------------------------------------------------------------------
 /* 4) Процедура для циклического обновления balance_history за какую-то глубину*/
 CREATE OR REPLACE PROCEDURE  update_balance_history(dt date)

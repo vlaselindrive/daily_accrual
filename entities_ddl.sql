@@ -113,7 +113,7 @@ select * from loans;
 DROP table if exists payments CASCADE ;
 CREATE TABLE payments (
     id INTEGER PRIMARY KEY,
-    external_id UUID DEFAULT gen_random_uuid(),
+    /*external_id UUID DEFAULT gen_random_uuid(),*/
     loan_id INT,
     source VARCHAR(100) NOT NULL,
     payment_dttm timestamp NOT NULL,
@@ -167,14 +167,16 @@ CREATE TABLE balance_history (
     id INTEGER DEFAULT nextval('sequence_5000') PRIMARY KEY,
     loan_id INT NOT NULL,
     balance_date date NOT NULL,
+    open_principal INT NOT NULL,
+    open_inetrest INT NOT NULL,
     loan_balance INT NOT NULL,
     created_dttm TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (loan_id) REFERENCES loans(id)
 );
 
-INSERT INTO balance_history (loan_id, balance_date, loan_balance)
+INSERT INTO balance_history (loan_id, balance_date, open_principal, open_inetrest, loan_balance)
 VALUES
-    (3004, '2025-03-08 16:00:00.000000', 0);
+    (3004, '2025-03-08 16:00:00.000000', 0, 0, 0);
 
 select * from balance_history;
 ----------------------------------------------------------------------
@@ -222,6 +224,8 @@ select
         else 'OK'
     end as dpd_status,
     t4.loan_balance,
+    t4.open_inetrest,
+    t4.open_principal,
     t3.daily_total_amount,
 --     t3.daily_total_amount * 0.2 as VAT_amount,
 --     t3.daily_total_amount * 0.3 as interest_amount,
@@ -249,3 +253,71 @@ order by t2.date desc;
 
 select * from daily_accrual;
 ----------------------------------------------------------------------
+
+
+-- Разработка DPD
+with date_list as ( /*Год размазанный по датам*/
+    SELECT generate_series(
+        '2025-01-01'::date,
+        '2026-01-01'::date,
+        '1 day'::interval
+    ) AS date
+order by date desc
+)
+select
+    DATE(t2.date) as report_dt,
+    t1.id as loan_id,
+    t5.product_name,
+    case
+        when t4.loan_balance <= 0 then 'PAID'
+        else t1.status
+    end as loan_status,
+    case
+        when DATE(t2.date) >= DATE(DATE(t1.open_dttm) + (t5.period_days * INTERVAL '1 day'))  AND
+             t4.loan_balance > 0 then 'WARNING:DPD'
+        when DATE(t2.date) >= DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t5.loan_limit * (100 - t7.third_period_share)) / 100 then 'WARNING:3'
+        when DATE(t2.date) >= DATE(DATE(t1.open_dttm) + (t7.second_period_days * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t5.loan_limit * (100 - t7.second_period_share)) / 100 then 'WARNING:2'
+        when DATE(t2.date) >= DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t5.loan_limit * (100 - t7.first_period_share)) / 100 then 'WARNING:1'
+        else 'OK'
+    end as collection_status,
+    case
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t5.period_days * INTERVAL '1 day'))  AND
+             t4.loan_balance > 0 then 'Last: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day')))::text
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day'))  AND
+            t4.loan_balance > (t5.loan_limit * (100 - t7.third_period_share)) / 100 then 'P3: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day')))::text
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.second_period_days * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t5.loan_limit * (100 - t7.second_period_share)) / 100 then 'P2: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (t7.second_period_days * INTERVAL '1 day')))::text
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t5.loan_limit * (100 - t7.first_period_share)) / 100 then 'P1: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day')))::text
+        else 'OK'
+    end as dpd_status,
+    t4.loan_balance,
+    t3.daily_total_amount,
+    t3.daily_total_amount * 0.2 as VAT_amount,
+    t3.daily_total_amount * 0.3 as interest_amount,
+    t3.daily_total_amount * 0.5 as debt_amount,
+    t3.transactions_ids
+from loans t1
+cross join date_list t2
+left join payments_agg t3
+    on t1.id = t3.loan_id
+    and DATE(t2.date) = t3.payment_dttm
+left join balance_history t4
+    on t1.id = t4.loan_id
+    and DATE(t2.date) = t4.balance_date
+left join products t5
+on t1.product_id = t5.id
+left join product_policies t7
+    on t5.policy_id = t7.id
+left join payment_schemes t8
+    on t1.product_id = t8.id
+-- left join clients t6
+-- on t1.client_id = t6.id
+where 1=1
+    and t1.id = 3001
+    and DATE(t2.date) <= '2025-03-22'
+    and DATE(t2.date) >= DATE(t1.open_dttm)
+order by t2.date desc;
