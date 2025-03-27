@@ -50,7 +50,7 @@ VALUES
 
 select * from products;
 ----------------------------------------------------------------------
-/* 2.2) Таблица с условиями выплат по продуктам*/
+/* 2.2) Таблица с графиком платежей по продуктам*/
 DROP table if exists product_policies CASCADE;
 CREATE TABLE product_policies (
     id INT PRIMARY KEY,
@@ -66,9 +66,26 @@ CREATE TABLE product_policies (
 INSERT INTO product_policies (id, policy_name, first_period_days, first_period_share, second_period_days, second_period_share, third_period_days, third_period_share)
 VALUES
     (6001,'standard', 31, 25, 62, 50, 93, 75),
-    (6002, 'test', 1, 50, 2, 70, 3, 90);
+    (6002, 'test', 1, 50, 2, 70, 3, 90),
+    (6003, 'test_dpd', 1, 50, 4, 70, 7, 90);
 
 select * from product_policies;
+
+/* 2.3) Таблица с условиями выплат по продуктам*/
+DROP table if exists payment_schemes CASCADE;
+CREATE TABLE payment_schemes (
+    id INT PRIMARY KEY,
+    scheme_name VARCHAR(100) NOT NULL,
+    VAT_share INT NOT NULL,
+    principal_share INT NOT NULL,
+    interest_share INT NOT NULL
+);
+
+INSERT INTO payment_schemes (id, scheme_name, VAT_share, principal_share, interest_share) VALUES
+    (6001,'annuity', 20, 40, 40),
+    (6002, 'fix', 40, 20, 40);
+
+select * from payment_schemes;
 ----------------------------------------------------------------------
 /* 3) Таблица с займами*/
 DROP table if exists loans CASCADE;
@@ -91,9 +108,12 @@ VALUES
 select * from loans;
 ----------------------------------------------------------------------
 /* 4.1) Таблица с транзакциями*/
+-- CREATE EXTENSION IF NOT EXISTS pgcrypto; /*Для генерации UUID*/
+
 DROP table if exists payments CASCADE ;
 CREATE TABLE payments (
     id INTEGER PRIMARY KEY,
+    external_id UUID DEFAULT gen_random_uuid(),
     loan_id INT,
     source VARCHAR(100) NOT NULL,
     payment_dttm timestamp NOT NULL,
@@ -180,16 +200,27 @@ select
 --     DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day')) as first_checkpoint_dt,
 --     (t5.loan_limit * (100 - t7.first_period_share)) / 100 as first_checkpoint_amount,
     case
-        when DATE(t2.date) >= DATE(DATE(t1.open_dttm) + (t5.period_days * INTERVAL '1 day'))  AND
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t5.period_days * INTERVAL '1 day'))  AND
              t4.loan_balance > 0 then 'WARNING:DPD'
-        when DATE(t2.date) >= DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day'))  AND
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day'))  AND
              t4.loan_balance > (t5.loan_limit * (100 - t7.third_period_share)) / 100 then 'WARNING:3'
-        when DATE(t2.date) >= DATE(DATE(t1.open_dttm) + (t7.second_period_days * INTERVAL '1 day'))  AND
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.second_period_days * INTERVAL '1 day'))  AND
              t4.loan_balance > (t5.loan_limit * (100 - t7.second_period_share)) / 100 then 'WARNING:2'
-        when DATE(t2.date) >= DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day'))  AND
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day'))  AND
              t4.loan_balance > (t5.loan_limit * (100 - t7.first_period_share)) / 100 then 'WARNING:1'
         else 'OK'
     end as collection_status,
+    case
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t5.period_days * INTERVAL '1 day'))  AND
+             t4.loan_balance > 0 then 'Last: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day')))::text
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day'))  AND
+            t4.loan_balance > (t5.loan_limit * (100 - t7.third_period_share)) / 100 then 'P3: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day')))::text
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.second_period_days * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t5.loan_limit * (100 - t7.second_period_share)) / 100 then 'P2: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (t7.second_period_days * INTERVAL '1 day')))::text
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t5.loan_limit * (100 - t7.first_period_share)) / 100 then 'P1: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day')))::text
+        else 'OK'
+    end as dpd_status,
     t4.loan_balance,
     t3.daily_total_amount,
 --     t3.daily_total_amount * 0.2 as VAT_amount,

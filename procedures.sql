@@ -36,7 +36,7 @@ END;
 $$;
 ----------------------------------------------------------------------
 /* 2) Процедура добавления новых транзакций*/
-CREATE OR REPLACE PROCEDURE new_payment_add(dt text)
+CREATE OR REPLACE PROCEDURE new_payment_add(dt date)
 LANGUAGE plpgsql
 AS $$
 DECLARE
@@ -112,4 +112,26 @@ BEGIN
 END;
 $$;
 ----------------------------------------------------------------------
+/* 5) Процедура для циклического обновления payments за какую-то глубину*/
+CREATE OR REPLACE PROCEDURE  update_payments_history(dt date)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    command1 text;
+BEGIN
 
+    /*Удаляем из целевой таблицы с займами все займы с idшниками, как во временной таблице*/
+    command1 := format('delete from payments where payment_dttm >= ''%I''', dt);
+    EXECUTE command1;
+
+    while dt < current_date loop
+        RAISE NOTICE 'Date is: %', dt;
+        call new_payment_add(dt);
+
+        dt := dt + INTERVAL '1 day';
+        end loop;
+
+    COMMIT;
+END;
+$$;
+----------------------------------------------------------------------
