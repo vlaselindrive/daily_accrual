@@ -22,13 +22,16 @@ BEGIN
     EXECUTE command2;
 
     /*Открываем балансы по новым займам*/
-    insert into balance_history (loan_id, balance_date, open_principal, open_inetrest, loan_balance)
+    insert into balance_history (loan_id, balance_date, open_principal, open_interest, open_VAT, loan_balance)
     select
         t1.id,
         t1.open_dttm,
         t2.loan_limit as open_principal,
-        (t2.loan_limit * t2.interest_rate / 100) * t2.period_days/365 as open_inetrest,
-        t2.loan_limit + (t2.loan_limit * t2.interest_rate / 100) * t2.period_days/365 as loan_balance
+        (t2.loan_limit * t2.interest_rate / 100) * t2.period_days/365 as open_interest,
+        ROUND(0.16 * (t2.loan_limit * t2.interest_rate / 100) * t2.period_days/365, 2) as open_VAT,
+        ROUND(t2.loan_limit +
+        (t2.loan_limit * t2.interest_rate / 100) * t2.period_days/365 +
+        0.16 * (t2.loan_limit * t2.interest_rate / 100) * t2.period_days/365, 2) as loan_balance
     from loans t1
     inner join products t2
         on t1.product_id = t2.id
@@ -48,15 +51,15 @@ DECLARE
 BEGIN
 
     /*Удаляем из целевой таблицы с займами все займы с idшниками, как во временной таблице*/
-    command1 := format('delete from payments where id in (select id from new_payments where DATE(payment_dttm) = ''%L'')', dt);
+    command1 := format('delete from payments where id in (select id from new_payments where DATE(payment_dttm) = %L)', dt::date);
     EXECUTE command1;
 
---     dt_formated := ''''  || dt || '''';
 
     /*Вставляем в целевую таблицу займы из временной таблицы*/
     command2 := format('insert into payments (id, /*external_id,*/ loan_id, source, payment_dttm, payment_amount)
                        select id, /*external_id::UUID,*/ loan_id, source, payment_dttm, payment_amount
-                       from new_payments where DATE(payment_dttm) = %L', dt);
+                       from new_payments where DATE(payment_dttm) = %L', dt::date);
+
     EXECUTE command2;
 
     COMMIT;
@@ -69,7 +72,7 @@ CREATE OR REPLACE PROCEDURE update_balance()
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    insert into balance_history (loan_id, balance_date, open_principal, open_inetrest, loan_balance)
+    insert into balance_history (loan_id, balance_date, open_principal, open_interest, open_vat, loan_balance)
     with fresh_balance as (
         select
             loan_id,
@@ -84,18 +87,28 @@ BEGIN
         case
             when t3.daily_total_amount is NULL then t1.open_principal
             else case
-                    when (t1.open_inetrest - t3.daily_total_amount) <= 0 then t1.open_principal + (t1.open_inetrest - t3.daily_total_amount)
+                    when t1.open_interest + (t1.open_vat - t3.daily_total_amount) <= 0 then t1.open_principal + (t1.open_interest + (t1.open_vat - t3.daily_total_amount))
                     else t1.open_principal
                  end
         end as updated_open_principal,
         /*INTEREST*/
         case
-            when t3.daily_total_amount is NULL then t1.open_inetrest
+            when t3.daily_total_amount is NULL then t1.open_interest
             else case
-                    when (t1.open_inetrest - t3.daily_total_amount) <= 0 then 0
-                    else (t1.open_inetrest - t3.daily_total_amount)
+                    when (t1.open_vat - t3.daily_total_amount) <= 0 then
+                        case when t1.open_interest + (t1.open_vat - t3.daily_total_amount) <= 0 then 0
+                             else (t1.open_interest + (t1.open_vat - t3.daily_total_amount)) end
+                    else t1.open_interest
                  end
         end as updated_open_interest,
+        /*VAT*/
+        case
+            when t3.daily_total_amount is NULL then t1.open_vat
+            else case
+                    when (t1.open_vat - t3.daily_total_amount) <= 0 then 0
+                    else (t1.open_vat - t3.daily_total_amount)
+                 end
+        end as updated_open_vat,
         /*TOTAL_BALANCE*/
         case
             when t3.daily_total_amount is NULL then t1.loan_balance
@@ -143,7 +156,7 @@ END;
 $$;
 ----------------------------------------------------------------------
 /* 5) Процедура для циклического обновления payments за какую-то глубину*/
-CREATE OR REPLACE PROCEDURE  update_payments_history(dt date)
+CREATE OR REPLACE PROCEDURE update_payments_history(dt date)
 LANGUAGE plpgsql
 AS $$
 DECLARE
@@ -156,7 +169,7 @@ BEGIN
 
     while dt < current_date loop
         RAISE NOTICE 'Date is: %', dt;
-        call new_payment_add(dt);
+        call new_payment_add(dt::date);
 
         dt := dt + INTERVAL '1 day';
         end loop;
@@ -165,3 +178,5 @@ BEGIN
 END;
 $$;
 ----------------------------------------------------------------------
+
+

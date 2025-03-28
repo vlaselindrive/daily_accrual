@@ -82,8 +82,9 @@ CREATE TABLE payment_schemes (
 );
 
 INSERT INTO payment_schemes (id, scheme_name, VAT_share, principal_share, interest_share) VALUES
-    (6001,'annuity', 20, 40, 40),
-    (6002, 'fix', 40, 20, 40);
+    (6001, 'fix', 16, 20, 40),
+    (6002,'annuity', 16, 40, 40),
+    (6003, 'differentiated', 16, 20, 40);
 
 select * from payment_schemes;
 ----------------------------------------------------------------------
@@ -168,15 +169,16 @@ CREATE TABLE balance_history (
     loan_id INT NOT NULL,
     balance_date date NOT NULL,
     open_principal INT NOT NULL,
-    open_inetrest INT NOT NULL,
+    open_interest INT NOT NULL,
+    open_VAT INT NOT NULL,
     loan_balance INT NOT NULL,
     created_dttm TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (loan_id) REFERENCES loans(id)
 );
 
-INSERT INTO balance_history (loan_id, balance_date, open_principal, open_inetrest, loan_balance)
+INSERT INTO balance_history (loan_id, balance_date, open_principal, open_interest, open_VAT, loan_balance)
 VALUES
-    (3004, '2025-03-08 16:00:00.000000', 0, 0, 0);
+    (3004, '2025-03-08 16:00:00.000000', 0, 0, 0, 0);
 
 select * from balance_history;
 ----------------------------------------------------------------------
@@ -196,11 +198,10 @@ select
     t1.id as loan_id,
     t5.product_name,
     case
+        when t4.loan_balance is null then 'NO BALANCE DATA'
         when t4.loan_balance <= 0 then 'PAID'
         else t1.status
     end as loan_status,
---     DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day')) as first_checkpoint_dt,
---     (t5.loan_limit * (100 - t7.first_period_share)) / 100 as first_checkpoint_amount,
     case
         when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t5.period_days * INTERVAL '1 day'))  AND
              t4.loan_balance > 0 then 'WARNING:DPD'
@@ -224,12 +225,10 @@ select
         else 'OK'
     end as dpd_status,
     t4.loan_balance,
-    t4.open_inetrest,
     t4.open_principal,
+    t4.open_interest,
+    t4.open_VAT,
     t3.daily_total_amount,
---     t3.daily_total_amount * 0.2 as VAT_amount,
---     t3.daily_total_amount * 0.3 as interest_amount,
---     t3.daily_total_amount * 0.5 as debt_amount,
     t3.transactions_ids
 from loans t1
 cross join date_list t2
@@ -243,8 +242,6 @@ left join products t5
 on t1.product_id = t5.id
 left join product_policies t7
     on t5.policy_id = t7.id
--- left join clients t6
--- on t1.client_id = t6.id
 where 1=1
 --     and t1.id = 3001
 --     and DATE(t2.date) <= '2025-03-22'
@@ -269,6 +266,7 @@ select
     t1.id as loan_id,
     t5.product_name,
     case
+        when t4.loan_balance is null then 'NO BALANCE DATA'
         when t4.loan_balance <= 0 then 'PAID'
         else t1.status
     end as loan_status,
