@@ -18,7 +18,7 @@ BEGIN
     EXECUTE command1;
 
     /*Вставляем в целевую таблицу займы из временной таблицы*/
-    command2 := format('insert into loans select id, client_id, product_id, status, open_dttm , due_dttm , close_dttm from %I', table_name);
+    command2 := format('insert into loans select id, product_id, offer_id, status, open_dttm , due_dttm , close_dttm from %I', table_name);
     EXECUTE command2;
 
     /*Открываем балансы по новым займам*/
@@ -26,16 +26,18 @@ BEGIN
     select
         t1.id,
         t1.open_dttm,
-        t2.loan_limit as open_principal,
-        (t2.loan_limit * t2.interest_rate / 100) * t2.period_days/365 as open_interest,
-        ROUND(0.16 * (t2.loan_limit * t2.interest_rate / 100) * t2.period_days/365, 2) as open_VAT,
-        ROUND(t2.loan_limit +
-        (t2.loan_limit * t2.interest_rate / 100) * t2.period_days/365 +
-        0.16 * (t2.loan_limit * t2.interest_rate / 100) * t2.period_days/365, 2) as loan_balance
+        t3.approved_amount as open_principal,
+        (t3.approved_amount * t2.interest_rate / 100) * t2.period_days/365 as open_interest,
+        ROUND(0.16 * (t3.approved_amount * t2.interest_rate / 100) * t2.period_days/365, 2) as open_VAT,
+        ROUND(t3.approved_amount +
+        (t3.approved_amount * t2.interest_rate / 100) * t2.period_days/365 +
+        0.16 * (t3.approved_amount * t2.interest_rate / 100) * t2.period_days/365, 2) as loan_balance
     from loans t1
     inner join products t2
         on t1.product_id = t2.id
-        and t1.status = 'ACTIVE';
+        and t1.status = 'ACTIVE'
+    left join offers t3
+    on t1.offer_id = t3.id;
     COMMIT;
 END;
 $$;
