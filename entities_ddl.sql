@@ -40,15 +40,43 @@ CREATE TABLE products (
     FOREIGN KEY (policy_id) REFERENCES product_policies(id)
 );
 
-INSERT INTO products (product_name, interest_rate, period_days, policy_id, risk_category, loan_limit)
+INSERT INTO products (product_name, interest_rate, period_days, policy_id, risk_category)
 VALUES
-    ('general_loan', 22, 124, 6002, 'A',16000),
-    ('general_loan', 24, 124, 6002, 'B',14000),
-    ('general_loan', 26, 124, 6002, 'C',12000),
-    ('newbies_loan', 20, 124, 6002, null,8000),
-    ('platinum_loan', 21, 124, 6001, null,18000);
+    ('general_loan', 22, 124, 6002, 'A'),
+    ('general_loan', 24, 124, 6002, 'B'),
+    ('general_loan', 26, 124, 6002, 'C'),
+    ('newbies_loan', 20, 124, 6002, null),
+    ('platinum_loan', 21, 124, 6001, null);
 
 select * from products;
+----------------------------------------------------------------------
+/* 2.1) Таблица с продуктами НОВАЯ*/
+DROP SEQUENCE if exists sequence_2000 CASCADE;
+CREATE SEQUENCE sequence_2000
+    START WITH 2001;
+
+DROP table if exists products_upd CASCADE;
+CREATE TABLE products_upd (
+    id INTEGER DEFAULT nextval('sequence_2000') PRIMARY KEY,
+    product_name VARCHAR(100) NOT NULL,
+    risk_category VARCHAR(100),
+    policy_id INT,
+    required_fields TEXT[],
+--     loan_limit INT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (policy_id) REFERENCES product_terms(id)
+);
+
+INSERT INTO products_upd (product_name, risk_category, policy_id, required_fields)
+VALUES
+    ('general_loan', 'A', 6001, ARRAY['CURP&RFC', 'Email', 'Address', '...']),
+    ('general_loan',  'B',6001, ARRAY['CURP&RFC', 'Email', 'Address', '...']),
+    ('general_loan', 'C', 6001, ARRAY['CURP&RFC', 'Email', 'Address', '...']),
+    ('newbies_loan',  NULL,6002, ARRAY['CURP&RFC', 'Email', 'Address', '...']),
+    ('platinum_loan', NULL, 6002, ARRAY['CURP&RFC', 'Email', 'Address', '...']);
+
+select * from products_upd;
+
 ----------------------------------------------------------------------
 /* 2.2) Таблица с графиком платежей по продуктам*/
 DROP table if exists product_policies CASCADE;
@@ -70,6 +98,27 @@ VALUES
     (6003, 'test_dpd', 1, 50, 4, 70, 7, 90);
 
 select * from product_policies;
+
+----------------------------------------------------------------------
+DROP TABLE IF EXISTS product_terms CASCADE;
+
+CREATE TABLE product_terms (
+    id INT PRIMARY KEY,
+    policy_name VARCHAR(100) NOT NULL,
+    status VARCHAR(100) NOT NULL,
+    policy_config JSONB NOT NULL, -- Хранение условий в формате JSONB
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO product_terms (id, policy_name, status, policy_config)
+VALUES
+    (6001, 'standard', 'ACTIVE','{"periods": 4, "period_length": 31, "total_interest_rate": 40, "period_interest_rate": 10, "interest_on": "open_principal"}'),
+    (6002, 'ultra-hard: 2d periods','ACTIVE', '{"periods": 62, "period_length": 2, "total_interest_rate": 40, "period_interest_rate": 0.645, "interest_on": "open_principal"}'),
+    (6003, 'hard: 4d periods','ACTIVE', '{"periods": 31, "period_length": 4, "total_interest_rate": 40, "period_interest_rate": 1.290, "interest_on": "open_principal"}');
+
+select * from product_terms;
+
+----------------------------------------------------------------------
 
 /* 2.3) Таблица с условиями выплат по продуктам*/
 DROP table if exists payment_schemes CASCADE;
@@ -107,7 +156,7 @@ CREATE TABLE loans (
 
 INSERT INTO loans (id, product_id, offer_id, status, open_dttm , due_dttm , close_dttm)
 VALUES
-    (3004, 2001, 7001,'PAID', '2024-10-04 18:00:00', '2025-03-08 18:00:00', '2025-03-08 16:00:00');
+    (3004, 2001, 7002,'PAID', '2024-10-04 18:00:00', '2025-03-08 18:00:00', '2025-03-08 16:00:00');
 
 select * from loans;
 ----------------------------------------------------------------------
@@ -198,7 +247,8 @@ CREATE TABLE offers (
 
 INSERT INTO offers (id, product_id, approved_amount, status)
 VALUES
-    (7001, 2001, 16000, 'ACTIVE');
+    (7001, 2001, 16000, 'ACTIVE'),
+    (7002, 2001, 12000, 'EXPIRED');
 
 select * from offers
 order by id desc;
@@ -225,25 +275,25 @@ select
         else t1.status
     end as loan_status,
     case
-        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t5.period_days * INTERVAL '1 day'))  AND
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + ((t9.policy_config ->> 'periods')::int * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
              t4.loan_balance > 0 then 'WARNING:DPD'
-        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day'))  AND
-             t4.loan_balance > (t8.approved_amount * (100 - t7.third_period_share)) / 100 then 'WARNING:3'
-        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.second_period_days * INTERVAL '1 day'))  AND
-             t4.loan_balance > (t8.approved_amount * (100 - t7.second_period_share)) / 100 then 'WARNING:2'
-        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day'))  AND
-             t4.loan_balance > (t8.approved_amount * (100 - t7.first_period_share)) / 100 then 'WARNING:1'
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (3 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t8.approved_amount * (100 - 75)) / 100 then 'WARNING:3'
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (2 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t8.approved_amount * (100 - 50)) / 100 then 'WARNING:2'
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (1 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t8.approved_amount * (100 - 25)) / 100 then 'WARNING:1'
         else 'OK'
     end as collection_status,
     case
-        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t5.period_days * INTERVAL '1 day'))  AND
-             t4.loan_balance > 0 then 'Last: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day')))::text
-        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day'))  AND
-            t4.loan_balance > (t8.approved_amount * (100 - t7.third_period_share)) / 100 then 'P3: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (t7.third_period_days * INTERVAL '1 day')))::text
-        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.second_period_days * INTERVAL '1 day'))  AND
-             t4.loan_balance > (t8.approved_amount * (100 - t7.second_period_share)) / 100 then 'P2: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (t7.second_period_days * INTERVAL '1 day')))::text
-        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day'))  AND
-             t4.loan_balance > (t8.approved_amount * (100 - t7.first_period_share)) / 100 then 'P1: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (t7.first_period_days * INTERVAL '1 day')))::text
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + ((t9.policy_config ->> 'periods')::int * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+             t4.loan_balance > 0 then 'Last: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (3 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day')))::text
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (3 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+            t4.loan_balance > (t8.approved_amount * (100 - 75)) / 100 then 'P3: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (3 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day')))::text
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (2 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t8.approved_amount * (100 - 50)) / 100 then 'P2: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (2 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day')))::text
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (1 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t8.approved_amount * (100 - 25)) / 100 then 'P1: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (1 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day')))::text
         else 'OK'
     end as dpd_status,
     t4.loan_balance,
@@ -266,6 +316,8 @@ left join products t5
 on t1.product_id = t5.id
 left join product_policies t7
     on t5.policy_id = t7.id
+left join product_terms t9
+    on t5.policy_id = t9.id
 where 1=1
 --     and t1.id = 3001
 --     and DATE(t2.date) <= '2025-03-22'
@@ -274,3 +326,88 @@ order by t2.date desc;
 
 select * from daily_accrual;
 ----------------------------------------------------------------------
+-- Доработка по статусам
+DROP VIEW if exists daily_accrual;
+CREATE VIEW daily_accrual AS
+with date_list as ( /*Год размазанный по датам*/
+    SELECT generate_series(
+        '2025-01-01'::date,
+        '2026-01-01'::date,
+        '1 day'::interval
+    ) AS date
+order by date desc
+)
+select
+    DATE(t2.date) as report_dt,
+    t1.id as loan_id,
+    t5.product_name,
+    case
+        when t4.loan_balance is null then 'NO BALANCE DATA'
+        when t4.loan_balance <= 0 then 'PAID'
+        else t1.status
+    end as loan_status,
+    case
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + ((t9.policy_config ->> 'periods')::int * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+             t4.loan_balance > 0 then 'WARNING:DPD'
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (3 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t8.approved_amount * (100 - 3 * (100/(t9.policy_config ->> 'periods')::int)) ) / 100 then 'WARNING:3'
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (2 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t8.approved_amount * (100 - 2 * (100/(t9.policy_config ->> 'periods')::int)) ) / 100 then 'WARNING:2'
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (1 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t8.approved_amount * (100 - 1 * (100/(t9.policy_config ->> 'periods')::int)) ) / 100 then 'WARNING:1'
+        else 'OK'
+    end as collection_status,
+    case
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + ((t9.policy_config ->> 'periods')::int * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+             t4.loan_balance > 0 then 'Last: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (3 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day')))::text
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (3 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+            t4.loan_balance > (t8.approved_amount * (100 - 3 * (100/(t9.policy_config ->> 'periods')::int))) / 100 then 'P3: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (3 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day')))::text
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (2 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t8.approved_amount * (100 - 2 * (100/(t9.policy_config ->> 'periods')::int))) / 100 then 'P2: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (2 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day')))::text
+        when DATE(t2.date) > DATE(DATE(t1.open_dttm) + (1 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day'))  AND
+             t4.loan_balance > (t8.approved_amount * (100 - 1 * (100/(t9.policy_config ->> 'periods')::int))) / 100 then 'P1: ' || (DATE(t2.date) - DATE(DATE(t1.open_dttm) + (1 * (t9.policy_config ->> 'period_length')::int * INTERVAL '1 day')))::text
+        else 'OK'
+    end as dpd_status,
+    t4.loan_balance,
+    t4.open_principal,
+    t4.open_interest,
+    t4.open_VAT,
+    t3.daily_total_amount,
+    t3.transactions_ids
+from loans t1
+cross join date_list t2
+left join offers t8
+    on t1.offer_id = t8.id
+left join payments_agg t3
+    on t1.id = t3.loan_id
+    and DATE(t2.date) = t3.payment_dttm
+left join balance_history t4
+    on t1.id = t4.loan_id
+    and DATE(t2.date) = t4.balance_date
+left join products_upd t5
+on t1.product_id = t5.id
+left join product_policies t7
+    on t5.policy_id = t7.id
+left join product_terms t9
+    on t5.policy_id = t9.id
+where 1=1
+--     and t1.id = 3001
+--     and DATE(t2.date) <= '2025-03-22'
+    and DATE(t2.date) >= DATE(t1.open_dttm)
+order by t2.date desc;
+
+select * from daily_accrual;
+----------------------------------------------------------------------
+SELECT
+    1 * (policy_config ->> 'period_length')::int as period_1,
+    2 * (policy_config ->> 'period_length')::int as period_1,
+    3 * (policy_config ->> 'period_length')::int as period_1,
+    (policy_config->>'periods')::int AS periods,
+    (policy_config->>'period_length')::int AS period_length,
+    (policy_config->>'interest_rate')::int AS interest_rate
+FROM terms;
+
+select
+    (policy_config ->> 'periods')::int * (policy_config ->> 'period_length')::int
+
+from product_terms
