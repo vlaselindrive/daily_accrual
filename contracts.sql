@@ -6,11 +6,12 @@ CREATE TABLE loan (
     interest_rate NUMERIC(5, 2) NOT NULL, -- ставка на каждый отдельный платежный период
     term_months INT NOT NULL,
     start_date DATE NOT NULL,
-    status TEXT DEFAULT 'active'
+    status TEXT DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Наполняем loan
-INSERT INTO loan ( amount, interest_rate, term_months, start_date)
+INSERT INTO loan (amount, interest_rate, term_months, start_date)
 VALUES
     (2000.00, 10.0, 4, '2025-01-01'),
     (2000.00, 16.0, 4, '2025-01-01'),
@@ -30,7 +31,8 @@ CREATE TABLE repayment_schedule (
     principal_part NUMERIC(14, 2) NOT NULL,
     interest_part NUMERIC(14, 2) NOT NULL,
     open_principal NUMERIC(14, 2) NOT NULL,
-    status TEXT DEFAULT 'scheduled' -- scheduled, paid, overdue и т.д.
+    status TEXT DEFAULT 'scheduled', -- scheduled, paid, overdue и т.д.,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -128,22 +130,14 @@ BEGIN
 
     END LOOP;
 END $$;
-
-delete from repayment_schedule;
-
-
-select * from loan;
-
-select * from repayment_schedule
-where loan_id = 1;
-
-call make_forecasted_schedule(1);
-
-
+------------------------------------------------------------
 -- Упаковываем график в JSON для контракта
+drop view if exists aggregated_schedule;
+create view aggregated_schedule as
 SELECT
     loan_id,
     version,
+    created_at,
     json_agg(
         json_build_object(
             'payment_number', payment_number,
@@ -159,9 +153,10 @@ FROM
     repayment_schedule
 GROUP BY
     loan_id,
+    version,
+    created_at
+order by
     version;
-
-
 ----------------------------------------------------
 -- Создаем таблицу loan_payments и заполняем ее тестовыми данными
 DROP table if exists loan_payments CASCADE ;
@@ -206,20 +201,23 @@ ORDER BY
     loan_id,
     month;
 ----------------------------------------------------
-select * from loan;
+select * from loan where id = 1;
 
-call make_forecasted_schedule(3);
-call recalculate_schedule_by_payment(3);
+call make_forecasted_schedule(1);
+call recalculate_schedule_by_payment(1);
+
+select * from loan_payments;
 
 select * from repayment_schedule
-where loan_id = 3
-and version = 1;
+where loan_id = 1
+and version = 4;
 
 delete from repayment_schedule;
 
 select * from loan_payments
 where loan_id = 1;
 
+-- Переплата
 delete from loan_payments where loan_id = 1;
 INSERT INTO loan_payments (loan_id, payment_date, payment_amount)
 VALUES
@@ -228,12 +226,32 @@ VALUES
     -- Февраль (3 транзакции)
     (1, '2025-02-05', 930.94);
 
+-- Досрочное погашение
+delete from loan_payments where loan_id = 1;
+INSERT INTO loan_payments (loan_id, payment_date, payment_amount)
+VALUES
+    -- Январь (1 транзакция)
+    (1, '2025-01-15', 630.94),
+    -- Февраль (3 транзакции)
+    (1, '2025-02-05', 1725.97);
+
+-- Недоплата
+INSERT INTO loan_payments (loan_id, payment_date, payment_amount)
+VALUES
+    -- Январь (1 транзакция)
+    (1, '2025-01-15', 300.94),
+    -- Февраль (3 транзакции)
+    (1, '2025-02-05', 400.94);
+
+
 INSERT INTO loan_payments (loan_id, payment_date, payment_amount)
 VALUES
     -- Январь (1 транзакция)
     (3, '2025-01-12', 374.89),
     -- Февраль (3 транзакции)
     (3, '2025-02-05', 1200.00);
+
+select * from aggregated_schedule;
 ----------------------------------------------------
 
 ------------------------------------------------------------------
@@ -282,9 +300,6 @@ END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 ---------------------------------------------
 -- Процедура пересчета графика с использованием функции аннуитета
--- Убедитесь, что функция calculate_annuity существует
--- CREATE OR REPLACE FUNCTION calculate_annuity(...) ...
-
 CREATE OR REPLACE PROCEDURE recalculate_schedule_by_payment( -- Новое имя процедуры
     IN p_loan_id INT
 )
@@ -432,7 +447,7 @@ BEGIN
                 current_principal := ROUND(current_principal - principal_to_insert, 2);
             END IF; -- current_principal > 0
 
-            schedule_status := 'projected'; -- Статус: спрогнозировано
+            schedule_status := 'scheduled'; -- Статус: спрогнозировано
 
         END IF; -- Конец IF по наличию платежей
 
