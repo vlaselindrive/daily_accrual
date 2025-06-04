@@ -203,14 +203,16 @@ ORDER BY
 ----------------------------------------------------
 select * from loan where id = 1;
 
-call make_forecasted_schedule(1);
+call make_forecasted_schedule(3);
 call recalculate_schedule_by_payment(1);
 
 select * from loan_payments;
 
 select * from repayment_schedule
-where loan_id = 1
-and version = 4;
+where loan_id = 3
+order by version;
+
+and version = 1;
 
 delete from repayment_schedule;
 
@@ -221,29 +223,32 @@ where loan_id = 1;
 delete from loan_payments where loan_id = 1;
 INSERT INTO loan_payments (loan_id, payment_date, payment_amount)
 VALUES
-    -- Январь (1 транзакция)
+    -- Январь
     (1, '2025-01-15', 630.94),
-    -- Февраль (3 транзакции)
+    -- Февраль
     (1, '2025-02-05', 930.94);
 
 -- Досрочное погашение
 delete from loan_payments where loan_id = 1;
 INSERT INTO loan_payments (loan_id, payment_date, payment_amount)
 VALUES
-    -- Январь (1 транзакция)
+    -- Январь
     (1, '2025-01-15', 630.94),
-    -- Февраль (3 транзакции)
+    -- Февраль
     (1, '2025-02-05', 1725.97);
 
 -- Недоплата
+delete from loan_payments where loan_id = 1;
 INSERT INTO loan_payments (loan_id, payment_date, payment_amount)
 VALUES
-    -- Январь (1 транзакция)
+    -- Январь
     (1, '2025-01-15', 300.94),
-    -- Февраль (3 транзакции)
+    -- Февраль
     (1, '2025-02-05', 400.94);
 
 
+
+-- Для займа с id=3
 INSERT INTO loan_payments (loan_id, payment_date, payment_amount)
 VALUES
     -- Январь (1 транзакция)
@@ -251,7 +256,10 @@ VALUES
     -- Февраль (3 транзакции)
     (3, '2025-02-05', 1200.00);
 
-select * from aggregated_schedule;
+
+-- Формат хранения в сущности контракта
+select * from aggregated_schedule
+where loan_id = 1 order by version;
 ----------------------------------------------------
 
 ------------------------------------------------------------------
